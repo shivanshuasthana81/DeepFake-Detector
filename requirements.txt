@@ -7,4 +7,4 @@ opencv-python
 numpy
 pillow
 gunicorn
-facenet_pytorch
+facenet-pytorch
