@@ -10,7 +10,6 @@ from flask_login import LoginManager, UserMixin, login_user, login_required, log
 
 import torch
 import cv2
-import tempfile
 import torchvision.transforms as T
 
 from src.utils.face_detect import crop_faces_from_frame
@@ -21,7 +20,8 @@ from src.model import CNNFeatureExtractor, CNN_LSTM_Attention
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 UPLOAD_FOLDER = os.path.join(BASE_DIR, "static", "uploads")
-MODEL_PATH = os.path.join(BASE_DIR, "models", "best.pth")  # use best.pth
+MODEL_PATH = os.path.join(BASE_DIR, "models", "best.pth")
+
 
 # ---------------- APP SETUP ---------------- #
 
@@ -44,9 +44,17 @@ class User(UserMixin, db.Model):
     username = db.Column(db.String(100), unique=True)
     password = db.Column(db.String(100))
 
+
 @login_manager.user_loader
 def load_user(user_id):
     return User.query.get(int(user_id))
+
+
+# ✅ IMPORTANT: CREATE DB TABLES AT STARTUP (Cloud Run Fix)
+with app.app_context():
+    print("🔥 Creating database tables...")
+    db.create_all()
+    print("✅ Database ready")
 
 
 # ---------------- MODEL SETUP ---------------- #
@@ -54,22 +62,31 @@ def load_user(user_id):
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
 transform = T.Compose([
-    T.Resize((224,224)),
+    T.Resize((224, 224)),
     T.ToTensor(),
-    T.Normalize([0.485,0.456,0.406],[0.229,0.224,0.225])
+    T.Normalize([0.485, 0.456, 0.406],
+                [0.229, 0.224, 0.225])
 ])
 
 feat_extractor = CNNFeatureExtractor().to(device)
 model = CNN_LSTM_Attention(feat_dim=feat_extractor.out_dim).to(device)
 
-checkpoint = torch.load(MODEL_PATH, map_location=device)
-feat_extractor.load_state_dict(checkpoint['feat_state'])
-model.load_state_dict(checkpoint['model_state'])
+# Safe model loading
+try:
+    print("📦 Loading model from:", MODEL_PATH)
 
-feat_extractor.eval()
-model.eval()
+    checkpoint = torch.load(MODEL_PATH, map_location='cpu')
 
-print("✅ Model loaded correctly")
+    feat_extractor.load_state_dict(checkpoint['feat_state'])
+    model.load_state_dict(checkpoint['model_state'])
+
+    feat_extractor.eval()
+    model.eval()
+
+    print("✅ Model loaded correctly")
+
+except Exception as e:
+    print("❌ MODEL LOAD ERROR:", str(e))
 
 
 # ---------------- PREDICTION FUNCTION ---------------- #
@@ -86,8 +103,7 @@ def predict_video(video_path):
         faces = crop_faces_from_frame(frame)
 
         if len(faces) > 0:
-            pil_img = faces[0]  # take first detected face
-            frames.append(pil_img)
+            frames.append(faces[0])
 
         ok, frame = cap.read()
         idx += 1
@@ -100,8 +116,8 @@ def predict_video(video_path):
     xs = torch.stack([transform(f) for f in frames]).unsqueeze(0).to(device)
 
     with torch.no_grad():
-        B,S,C,H,W = xs.shape
-        seqs = xs.view(B*S, C, H, W)
+        B, S, C, H, W = xs.shape
+        seqs = xs.view(B * S, C, H, W)
 
         feats = feat_extractor(seqs)
         feats = feats.view(B, S, -1)
@@ -109,7 +125,6 @@ def predict_video(video_path):
         logits, _ = model(feats)
         probs = torch.softmax(logits, dim=1).cpu().numpy()[0]
 
-    # SAME LOGIC AS STREAMLIT
     label = "FAKE" if probs[1] > probs[0] else "REAL"
     confidence = max(probs) * 100
 
@@ -128,7 +143,7 @@ def about():
     return render_template('about.html')
 
 
-@app.route('/register', methods=['GET','POST'])
+@app.route('/register', methods=['GET', 'POST'])
 def register():
     if request.method == 'POST':
         try:
@@ -150,7 +165,7 @@ def register():
     return render_template('register.html')
 
 
-@app.route('/login', methods=['GET','POST'])
+@app.route('/login', methods=['GET', 'POST'])
 def login():
     if request.method == 'POST':
         try:
@@ -172,7 +187,7 @@ def login():
     return render_template('login.html')
 
 
-@app.route('/dashboard', methods=['GET','POST'])
+@app.route('/dashboard', methods=['GET', 'POST'])
 @login_required
 def dashboard():
     if request.method == 'POST':
@@ -181,6 +196,8 @@ def dashboard():
         if file.filename == '':
             flash("No file selected")
             return redirect(url_for('dashboard'))
+
+        os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
 
         filepath = os.path.join(app.config['UPLOAD_FOLDER'], file.filename)
         file.save(filepath)
@@ -201,14 +218,14 @@ def logout():
     return redirect(url_for('login'))
 
 
+# Health check (recommended for Cloud Run)
+@app.route('/health')
+def health():
+    return "OK", 200
+
+
 # ---------------- RUN ---------------- #
 
 if __name__ == '__main__':
     os.makedirs(UPLOAD_FOLDER, exist_ok=True)
-
-    with app.app_context():
-        print("Creating DB...")
-        db.create_all()
-        print("DB created")
-
     app.run(debug=True)
