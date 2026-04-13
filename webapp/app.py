@@ -2,6 +2,7 @@ import os
 import uuid
 import sqlite3
 import requests
+import time
 
 from werkzeug.utils import secure_filename
 
@@ -22,7 +23,8 @@ def allowed_file(filename):
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = 'secret123'
-app.config['MAX_CONTENT_LENGTH'] = 20 * 1024 * 1024
+app.config['MAX_CONTENT_LENGTH'] = 20 * 1024 * 1024  # 20MB
+
 
 login_manager = LoginManager()
 login_manager.init_app(app)
@@ -88,32 +90,41 @@ HF_API_URL = "https://shivanshuasthana81-deepfake-detector.hf.space/run/predict"
 
 
 def predict_video_api(filepath):
-    try:
-        with open(filepath, "rb") as f:
-            response = requests.post(
-                HF_API_URL,
-                files={"data": f},
-                timeout=60  # 🔥 important
-            )
+    """
+    Calls Hugging Face Space API
+    Includes retry + timeout handling
+    """
 
-        if response.status_code != 200:
-            print("API ERROR:", response.text)
+    for attempt in range(2):  # 🔥 retry twice
+        try:
+            with open(filepath, "rb") as f:
+                response = requests.post(
+                    HF_API_URL,
+                    files={"data": (os.path.basename(filepath), f, "video/mp4")},
+                    timeout=120  # 🔥 increased timeout
+                )
+
+            if response.status_code != 200:
+                print("❌ API ERROR:", response.text)
+                return "ERROR", 0
+
+            result = response.json()
+
+            # Expected Gradio format
+            label = result["data"][0]
+            confidence = result["data"][1]
+
+            return label, confidence
+
+        except requests.exceptions.Timeout:
+            print("⏳ Timeout, retrying...")
+            time.sleep(3)
+
+        except Exception as e:
+            print("❌ REQUEST ERROR:", e)
             return "ERROR", 0
 
-        result = response.json()
-
-        # Gradio response
-        label = result["data"][0]
-        confidence = result["data"][1]
-
-        return label, confidence
-
-    except requests.exceptions.Timeout:
-        return "TIMEOUT (HF sleeping)", 0
-
-    except Exception as e:
-        print("REQUEST ERROR:", e)
-        return "ERROR", 0
+    return "TIMEOUT (HF sleeping)", 0
 
 
 # ---------------- ROUTES ---------------- #
@@ -123,7 +134,7 @@ def home():
     return render_template('home.html')
 
 
-@app.route('/register', methods=['GET','POST'])
+@app.route('/register', methods=['GET', 'POST'])
 def register():
     if request.method == 'POST':
         username = request.form['username']
@@ -148,7 +159,7 @@ def register():
     return render_template('register.html')
 
 
-@app.route('/login', methods=['GET','POST'])
+@app.route('/login', methods=['GET', 'POST'])
 def login():
     if request.method == 'POST':
         username = request.form['username']
@@ -171,13 +182,13 @@ def login():
     return render_template('login.html')
 
 
-@app.route('/dashboard', methods=['GET','POST'])
+@app.route('/dashboard', methods=['GET', 'POST'])
 @login_required
 def dashboard():
     if request.method == 'POST':
 
         if 'video' not in request.files:
-            flash("No file")
+            flash("No file uploaded")
             return redirect(url_for('dashboard'))
 
         file = request.files['video']
@@ -187,7 +198,7 @@ def dashboard():
             return redirect(url_for('dashboard'))
 
         if not allowed_file(file.filename):
-            flash("Invalid file")
+            flash("Invalid file format")
             return redirect(url_for('dashboard'))
 
         filename = secure_filename(file.filename)
@@ -196,15 +207,18 @@ def dashboard():
         filepath = os.path.join(app.config['UPLOAD_FOLDER'], unique_name)
         file.save(filepath)
 
+        # 🔥 Call HF API
         label, confidence = predict_video_api(filepath)
 
-        # delete file
+        # 🔥 Delete file after processing
         if os.path.exists(filepath):
             os.remove(filepath)
 
-        return render_template('result.html',
-                               label=label,
-                               confidence=confidence)
+        return render_template(
+            'result.html',
+            label=label,
+            confidence=confidence
+        )
 
     return render_template('dashboard.html', username=current_user.username)
 
@@ -225,6 +239,8 @@ def health():
 def too_large(e):
     return "File too large (Max 20MB)", 413
 
+
+# ---------------- MAIN ---------------- #
 
 if __name__ == '__main__':
     app.run(debug=True)
