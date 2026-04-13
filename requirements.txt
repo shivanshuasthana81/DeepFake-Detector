@@ -8,5 +8,4 @@ numpy
 pillow
 gunicorn
 facenet-pytorch
-google-cloud-firestore
 werkzeug
