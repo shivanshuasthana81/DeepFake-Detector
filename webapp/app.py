@@ -5,6 +5,7 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from flask import Flask, render_template, redirect, url_for, request, flash
 from flask_login import LoginManager, UserMixin, login_user, login_required, logout_user, current_user
+from werkzeug.security import generate_password_hash, check_password_hash
 
 import torch
 import cv2
@@ -130,10 +131,11 @@ def register():
     if request.method == 'POST':
         username = request.form['username']
         password = request.form['password']
+        hashed_password = generate_password_hash(password)
 
         db.collection("users").document(username).set({
             "username": username,
-            "password": password
+            "password": hashed_password
         })
 
         flash("Registered Successfully")
@@ -153,7 +155,7 @@ def login():
         if doc.exists:
             data = doc.to_dict()
 
-            if data["password"] == password:
+            if check_password_hash(data["password"], password):
                 user = User(username, username, password)
                 login_user(user)
                 return redirect(url_for('dashboard'))
