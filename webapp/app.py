@@ -33,7 +33,7 @@ def allowed_file(filename):
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = 'secret123'
-app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024
+app.config['MAX_CONTENT_LENGTH'] = 20 * 1024 * 1024  # 🔥 reduce to 20MB
 
 login_manager = LoginManager()
 login_manager.init_app(app)
@@ -95,8 +95,9 @@ os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
 device = 'cpu'
 
+# 🔥 smaller transform
 transform = T.Compose([
-    T.Resize((224, 224)),
+    T.Resize((112, 112)),
     T.ToTensor(),
     T.Normalize([0.485, 0.456, 0.406],
                 [0.229, 0.224, 0.225])
@@ -112,49 +113,49 @@ model.load_state_dict(checkpoint['model_state'])
 feat_extractor.eval()
 model.eval()
 
-print("✅ Model loaded correctly")
+print("✅ Model loaded")
 
 
-# ---------------- PREDICTION (MEMORY SAFE) ---------------- #
+# ---------------- ULTRA-LIGHT PREDICTION ---------------- #
 
 def predict_video(video_path):
 
     cap = cv2.VideoCapture(video_path)
+
+    # 🔥 HARD LIMIT video length
+    if cap.get(cv2.CAP_PROP_FRAME_COUNT) > 80:
+        cap.release()
+        return "VIDEO TOO LONG", 0
+
     frames = []
+    count = 0
 
     ok, frame = cap.read()
-    idx = 0
-    frame_skip = 4  # 🔥 more aggressive skip
 
-    while ok and idx < 20:
-        if idx % frame_skip == 0:
-            faces = crop_faces_from_frame(frame)
+    while ok and count < 8:  # 🔥 very few frames
+        faces = crop_faces_from_frame(frame)
 
-            if len(faces) > 0:
-                # 🔥 resize early to reduce memory
-                face = cv2.resize(faces[0], (160, 160))
-                frames.append(face)
+        if len(faces) > 0:
+            face = cv2.resize(faces[0], (112, 112))
+            frames.append(face)
+
+            if len(frames) >= 2:  # 🔥 ONLY 2 FRAMES
+                break
 
         ok, frame = cap.read()
-        idx += 1
+        count += 1
 
     cap.release()
 
     if len(frames) < 2:
         return "NO FACE DETECTED", 0
 
-    # 🔥 reduce frames further
-    frames = frames[:4]
-
     try:
-        xs = torch.stack([transform(f) for f in frames]).unsqueeze(0).to(device)
+        xs = torch.stack([transform(f) for f in frames]).unsqueeze(0)
 
         with torch.no_grad():
-            B, S, C, H, W = xs.shape
-            seqs = xs.view(B * S, C, H, W)
-
-            feats = feat_extractor(seqs)
-            feats = feats.view(B, S, -1)
+            feats = feat_extractor(xs.view(-1, *xs.shape[2:]))
+            feats = feats.view(1, len(frames), -1)
 
             logits, _ = model(feats)
             probs = torch.softmax(logits, dim=1).cpu().numpy()[0]
@@ -163,7 +164,7 @@ def predict_video(video_path):
         confidence = max(probs) * 100
 
     except Exception as e:
-        print("Error during prediction:", e)
+        print("Prediction Error:", e)
         return "ERROR", 0
 
     finally:
@@ -193,7 +194,7 @@ def register():
         c = conn.cursor()
 
         try:
-            c.execute("INSERT INTO users (id, username, password) VALUES (?, ?, ?)",
+            c.execute("INSERT INTO users VALUES (?, ?, ?)",
                       (username, username, hashed_password))
             conn.commit()
             flash("Registered Successfully")
@@ -220,13 +221,9 @@ def login():
 
         conn.close()
 
-        if user:
-            stored_password = user[2]
-
-            if check_password_hash(stored_password, password):
-                user_obj = User(username, username, stored_password)
-                login_user(user_obj)
-                return redirect(url_for('dashboard'))
+        if user and check_password_hash(user[2], password):
+            login_user(User(user[0], user[1], user[2]))
+            return redirect(url_for('dashboard'))
 
         flash("Invalid credentials")
 
@@ -238,12 +235,8 @@ def login():
 def dashboard():
     if request.method == 'POST':
 
-        if request.content_length > 50 * 1024 * 1024:
-            flash("File too large!")
-            return redirect(url_for('dashboard'))
-
         if 'video' not in request.files:
-            flash("No file part")
+            flash("No file")
             return redirect(url_for('dashboard'))
 
         file = request.files['video']
@@ -253,7 +246,7 @@ def dashboard():
             return redirect(url_for('dashboard'))
 
         if not allowed_file(file.filename):
-            flash("Invalid file type. Only MP4, AVI, MOV allowed.")
+            flash("Invalid file")
             return redirect(url_for('dashboard'))
 
         filename = secure_filename(file.filename)
@@ -262,17 +255,11 @@ def dashboard():
         filepath = os.path.join(app.config['UPLOAD_FOLDER'], unique_name)
         file.save(filepath)
 
-        start_time = time.time()
-
         label, confidence = predict_video(filepath)
 
-        # 🔥 delete file immediately
+        # 🔥 delete immediately
         if os.path.exists(filepath):
             os.remove(filepath)
-
-        if time.time() - start_time > 45:
-            flash("Processing too slow. Try shorter video.")
-            return redirect(url_for('dashboard'))
 
         return render_template('result.html',
                                label=label,
@@ -295,7 +282,7 @@ def health():
 
 @app.errorhandler(413)
 def too_large(e):
-    return "File too large (Max 50MB)", 413
+    return "File too large (Max 20MB)", 413
 
 
 if __name__ == '__main__':
