@@ -1,0 +1,5 @@
+experiments/
+scripts/
+src/
+*.pth
+__pycache__/
