@@ -1,33 +1,73 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Dashboard</title>
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+
+    <!-- CSS -->
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
 </head>
 
-<body class="bg-light">
+<body>
 
-<nav class="navbar navbar-dark bg-dark px-4">
-    <a class="navbar-brand" href="/">DeepFake Detector</a>
+<!-- NAVBAR -->
+<nav class="navbar">
+    <div class="logo">DeepFake Detector</div>
 
-    <div>
-        <a href="/about" class="btn btn-outline-light me-2">About</a>
-        <a href="/logout" class="btn btn-danger">Logout</a>
+    <div class="nav-links">
+        <a href="/about">About</a>
+        <a href="/logout" class="btn-danger">Logout</a>
     </div>
 </nav>
 
-<div class="container mt-5">
+<!-- MAIN CONTAINER -->
+<div class="container">
 
-    <h2>Welcome, {{ username }} 👋</h2>
+    <h1>Welcome, {{ username }} 👋</h1>
 
-    <div class="card p-4 mt-3">
-        <form method="POST" enctype="multipart/form-data">
-            <input class="form-control mb-3" type="file" name="video" required>
-            <button class="btn btn-primary">Analyze Video</button>
+    <div class="card">
+
+        <h2>Upload Video</h2>
+
+        <!-- FORM -->
+        <form method="POST" enctype="multipart/form-data" onsubmit="showLoader()">
+
+            <input type="file" name="video" id="videoInput" accept="video/*" required>
+
+            <!-- VIDEO PREVIEW -->
+            <video id="preview" controls></video>
+
+            <button type="submit" class="btn-primary">Analyze Video</button>
+
         </form>
+
+        <!-- LOADER -->
+        <div id="loader">
+            <div class="spinner"></div>
+            <p>Processing video... please wait</p>
+        </div>
+
     </div>
 
 </div>
+
+<!-- SCRIPT -->
+<script>
+document.getElementById("videoInput").onchange = function (event) {
+    const file = event.target.files[0];
+    if (file) {
+        const url = URL.createObjectURL(file);
+        const video = document.getElementById("preview");
+        video.src = url;
+        video.style.display = "block";
+    }
+};
+
+function showLoader() {
+    document.getElementById("loader").style.display = "flex";
+}
+</script>
 
 </body>
 </html>
