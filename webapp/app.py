@@ -215,7 +215,7 @@ def dashboard():
 
         label, confidence = predict_video(filepath)
 
-        if time.time() - start_time > 20:
+        if time.time() - start_time > 45:
             flash("Processing too slow. Try shorter video.")
             return redirect(url_for('dashboard'))
 
