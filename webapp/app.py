@@ -1,25 +1,13 @@
 import os
-import sys
 import uuid
 import sqlite3
+import requests
+import base64
 
-# ✅ FIX 1: ADD ROOT PATH (VERY IMPORTANT)
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-ROOT_DIR = os.path.abspath(os.path.join(BASE_DIR, ".."))
-sys.path.append(ROOT_DIR)
-
-# ---------------- IMPORTS ---------------- #
 from flask import Flask, render_template, redirect, url_for, request, flash
 from flask_login import LoginManager, UserMixin, login_user, login_required, logout_user, current_user
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
-
-import torch
-import cv2
-import torchvision.transforms as T
-
-from src.utils.face_detect import crop_faces_from_frame
-from src.model import CNNFeatureExtractor, CNN_LSTM_Attention
 
 
 # ---------------- CONFIG ---------------- #
@@ -44,6 +32,7 @@ login_manager.login_view = "login"
 
 # ---------------- DATABASE ---------------- #
 
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_PATH = os.path.join(BASE_DIR, "users.db")
 
 def init_db():
@@ -93,74 +82,47 @@ os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 
 
-# ---------------- MODEL LOAD ---------------- #
+# ---------------- HF API ---------------- #
 
-MODEL_PATH = os.path.join(BASE_DIR, "models", "best.pth")
-
-device = "cpu"
-
-transform = T.Compose([
-    T.Resize((224,224)),
-    T.ToTensor(),
-    T.Normalize([0.485,0.456,0.406],[0.229,0.224,0.225])
-])
-
-feat_extractor = CNNFeatureExtractor().to(device)
-model = CNN_LSTM_Attention(feat_dim=feat_extractor.out_dim).to(device)
-
-checkpoint = torch.load(MODEL_PATH, map_location=device)
-feat_extractor.load_state_dict(checkpoint['feat_state'])
-model.load_state_dict(checkpoint['model_state'])
-
-feat_extractor.eval()
-model.eval()
-
-print("✅ Model loaded correctly on Render")
+HF_API_URL = "https://shivanshuasthana81-deepfake-detector.hf.space/run/predict"
 
 
-# ---------------- PREDICTION ---------------- #
+def predict_video_api(filepath):
+    try:
+        with open(filepath, "rb") as f:
+            video_bytes = f.read()
 
-def predict_video(video_path):
-    cap = cv2.VideoCapture(video_path)
+        video_base64 = base64.b64encode(video_bytes).decode("utf-8")
 
-    frames = []
-    ok, frame = cap.read()
-    idx = 0
+        payload = {
+            "data": [
+                {
+                    "name": os.path.basename(filepath),
+                    "data": f"data:video/mp4;base64,{video_base64}"
+                }
+            ]
+        }
 
-    while ok and idx < 16:
-        try:
-            faces = crop_faces_from_frame(frame)
+        response = requests.post(HF_API_URL, json=payload, timeout=120)
 
-            if len(faces) > 0:
-                frames.append(faces[0])
+        if response.status_code != 200:
+            print("❌ API ERROR:", response.text)
+            return "ERROR", 0
 
-        except Exception as e:
-            print("Face error:", e)
+        result = response.json()
+        print("🔍 HF RESPONSE:", result)
 
-        ok, frame = cap.read()
-        idx += 1
+        if "data" not in result:
+            return "ERROR", 0
 
-    cap.release()
+        label = result["data"][0]
+        confidence = float(result["data"][1])
 
-    if len(frames) < 2:
-        return "NO FACE DETECTED", 0
+        return label, round(confidence, 2)
 
-    xs = torch.stack([transform(f) for f in frames]).unsqueeze(0).to(device)
-
-    with torch.no_grad():
-        B,S,C,H,W = xs.shape
-        seqs = xs.view(B*S, C, H, W)
-
-        feats = feat_extractor(seqs)
-        feats = feats.view(B, S, -1)
-
-        logits, _ = model(feats)
-        probs = torch.softmax(logits, dim=1).cpu().numpy()[0]
-
-    label = "FAKE" if probs[1] > probs[0] else "REAL"
-    confidence = max(probs) * 100
-
-    return label, round(confidence, 2)
+    except Exception as e:
+        print("❌ REQUEST ERROR:", e)
+        return "ERROR", 0
 
 
 # ---------------- ROUTES ---------------- #
@@ -246,13 +208,15 @@ def dashboard():
 
         print("Uploaded:", filepath)
 
-        label, confidence = predict_video(filepath)
+        label, confidence = predict_video_api(filepath)
 
         os.remove(filepath)
 
-        return render_template('result.html',
-                               label=label,
-                               confidence=confidence)
+        return render_template(
+            'result.html',
+            label=label,
+            confidence=confidence
+        )
 
     return render_template('dashboard.html', username=current_user.username)
 
