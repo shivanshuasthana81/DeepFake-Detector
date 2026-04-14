@@ -88,14 +88,14 @@ os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 
 
-# ---------------- HF API (FINAL FIX) ---------------- #
+# ---------------- HF API (FINAL CORRECT) ---------------- #
 
-HF_API_URL = "https://shivanshuasthana81-deepfake-detector.hf.space/run/predict"
+HF_API_URL = "https://shivanshuasthana81-deepfake-detector.hf.space/api/predict"
 
 
 def predict_video_api(filepath):
     try:
-        print("🚀 Sending request to HF (REST API)...")
+        print("🚀 Sending request to HF API...")
 
         with open(filepath, "rb") as f:
             video_bytes = f.read()
@@ -103,12 +103,7 @@ def predict_video_api(filepath):
         video_base64 = base64.b64encode(video_bytes).decode("utf-8")
 
         payload = {
-            "data": [
-                {
-                    "name": os.path.basename(filepath),
-                    "data": f"data:video/mp4;base64,{video_base64}"
-                }
-            ]
+            "video": f"data:video/mp4;base64,{video_base64}"
         }
 
         response = requests.post(HF_API_URL, json=payload, timeout=120)
@@ -120,11 +115,8 @@ def predict_video_api(filepath):
 
         result = response.json()
 
-        if "data" not in result:
-            raise Exception("Invalid HF response format")
-
-        label = result["data"][0]
-        confidence = float(result["data"][1])
+        label = result["label"]
+        confidence = float(result["confidence"])
 
         return label, round(confidence, 2)
 
@@ -220,12 +212,11 @@ def dashboard():
 
         label, confidence = predict_video_api(filepath)
 
-        # cleanup
         if os.path.exists(filepath):
             os.remove(filepath)
 
         if label == "ERROR":
-            flash("Model is waking up or failed. Please try again.")
+            flash("Model failed or warming up. Try again.")
             return redirect(url_for('dashboard'))
 
         return render_template(
