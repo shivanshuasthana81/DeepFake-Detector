@@ -1,14 +1,13 @@
 import os
 import uuid
 import sqlite3
-import time
+import base64
+import requests
 
 from flask import Flask, render_template, redirect, url_for, request, flash
 from flask_login import LoginManager, UserMixin, login_user, login_required, logout_user, current_user
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
-
-from gradio_client import Client
 
 
 # ---------------- CONFIG ---------------- #
@@ -19,7 +18,14 @@ def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
 
 
-app = Flask(__name__)
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+app = Flask(
+    __name__,
+    template_folder=os.path.join(BASE_DIR, "templates"),
+    static_folder=os.path.join(BASE_DIR, "static")
+)
+
 app.config['SECRET_KEY'] = 'secret123'
 app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024
 
@@ -33,7 +39,6 @@ login_manager.login_view = "login"
 
 # ---------------- DATABASE ---------------- #
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_PATH = os.path.join(BASE_DIR, "users.db")
 
 def init_db():
@@ -83,52 +88,49 @@ os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 
 
-# ---------------- HF CALL (FINAL STABLE) ---------------- #
+# ---------------- HF API (FINAL FIX) ---------------- #
+
+HF_API_URL = "https://shivanshuasthana81-deepfake-detector.hf.space/run/predict"
+
 
 def predict_video_api(filepath):
+    try:
+        print("🚀 Sending request to HF (REST API)...")
 
-    for attempt in range(3):
-        try:
-            print(f"🚀 Attempt {attempt+1}: Connecting to HF...")
+        with open(filepath, "rb") as f:
+            video_bytes = f.read()
 
-            # ✅ IMPORTANT: create client INSIDE function
-            client = Client("shivanshuasthana81/deepfake-detector")
+        video_base64 = base64.b64encode(video_bytes).decode("utf-8")
 
-            result = client.predict(
-                video=filepath,
-                api_name="predict"
-            )
+        payload = {
+            "data": [
+                {
+                    "name": os.path.basename(filepath),
+                    "data": f"data:video/mp4;base64,{video_base64}"
+                }
+            ]
+        }
 
-            print("🔍 RAW RESULT:", result)
+        response = requests.post(HF_API_URL, json=payload, timeout=120)
 
-            # ✅ SAFE PARSING
-            if isinstance(result, (list, tuple)):
+        print("🔍 RAW RESPONSE:", response.text)
 
-                if len(result) == 2 and isinstance(result[0], str):
-                    label = result[0]
-                    confidence = float(result[1])
+        if response.status_code != 200:
+            raise Exception(f"HF API failed: {response.status_code}")
 
-                elif len(result) == 1 and isinstance(result[0], (list, tuple)):
-                    label = result[0][0]
-                    confidence = float(result[0][1])
+        result = response.json()
 
-                else:
-                    raise Exception("Unexpected response format")
+        if "data" not in result:
+            raise Exception("Invalid HF response format")
 
-            else:
-                raise Exception("Invalid response type")
+        label = result["data"][0]
+        confidence = float(result["data"][1])
 
-            # ✅ PREVENT FAKE 0% BUG
-            if confidence == 0:
-                raise Exception("HF not ready (confidence 0)")
+        return label, round(confidence, 2)
 
-            return label, round(confidence, 2)
-
-        except Exception as e:
-            print(f"❌ Attempt {attempt+1} failed:", e)
-            time.sleep(3)
-
-    return "ERROR", 0
+    except Exception as e:
+        print("❌ HF ERROR:", e)
+        return "ERROR", 0
 
 
 # ---------------- ROUTES ---------------- #
@@ -222,9 +224,8 @@ def dashboard():
         if os.path.exists(filepath):
             os.remove(filepath)
 
-        # ✅ HANDLE ERROR PROPERLY (NO FAKE 0%)
         if label == "ERROR":
-            flash("Model is waking up... Please try again in a few seconds.")
+            flash("Model is waking up or failed. Please try again.")
             return redirect(url_for('dashboard'))
 
         return render_template(
