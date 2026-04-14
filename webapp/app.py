@@ -2,13 +2,11 @@ import os
 import uuid
 import sqlite3
 import requests
-import time
-import base64
 
 from werkzeug.utils import secure_filename
 
 from flask import Flask, render_template, redirect, url_for, request, flash
-from flask_login import LoginManager, UserMixin, login_user, login_required, logout_user, current_user
+from flask_login import LoginManager, UserMixin, login_user, login_required, logout_user
 from werkzeug.security import generate_password_hash, check_password_hash
 
 
@@ -24,9 +22,7 @@ def allowed_file(filename):
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = 'secret123'
-
-# ✅ Increased file size (50MB)
-app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024
+app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024  # 50MB
 
 
 login_manager = LoginManager()
@@ -87,56 +83,52 @@ app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
 
-# ---------------- HF API (FIXED) ---------------- #
+# ---------------- HF API (FINAL FIXED) ---------------- #
 
-HF_API_URL = "https://shivanshuasthana81-deepfake-detector.hf.space/api/predict"
+HF_API_URL = "https://shivanshuasthana81-deepfake-detector.hf.space/run/predict"
 
 
 def predict_video_api(filepath):
     """
-    Stable Hugging Face API call using /api/predict
+    Stable HF API using file upload (NO base64)
     """
 
     try:
         with open(filepath, "rb") as f:
-            video_bytes = f.read()
-
-        # ✅ Convert to base64 (required by Gradio API)
-        video_base64 = base64.b64encode(video_bytes).decode("utf-8")
-
-        payload = {
-            "data": [
-                {
-                    "name": os.path.basename(filepath),
-                    "data": f"data:video/mp4;base64,{video_base64}"
-                }
-            ]
-        }
-
-        response = requests.post(
-            HF_API_URL,
-            json=payload,
-            timeout=120
-        )
+            response = requests.post(
+                HF_API_URL,
+                files={
+                    "data": (
+                        os.path.basename(filepath),
+                        f,
+                        "video/mp4"
+                    )
+                },
+                timeout=120
+            )
 
         if response.status_code != 200:
             print("❌ API ERROR:", response.text)
-            return "ERROR", 0
+            return None, 0   # ❗ IMPORTANT CHANGE
 
         result = response.json()
         print("🔍 API RESPONSE:", result)
 
         if "data" not in result or len(result["data"]) < 2:
-            return "ERROR", 0
+            return None, 0   # ❗ IMPORTANT CHANGE
 
-        label = result["data"][0]
-        confidence = float(result["data"][1])
+        label = str(result["data"][0])
+
+        try:
+            confidence = float(result["data"][1])
+        except:
+            confidence = 0.0
 
         return label, round(confidence, 2)
 
     except Exception as e:
         print("❌ REQUEST ERROR:", e)
-        return "ERROR", 0
+        return None, 0   # ❗ IMPORTANT CHANGE
 
 
 # ---------------- ROUTES ---------------- #
@@ -149,8 +141,8 @@ def home():
 @app.route('/about')
 def about():
     return render_template('about.html')
-    
-    
+
+
 @app.route('/register', methods=['GET', 'POST'])
 def register():
     if request.method == 'POST':
@@ -226,17 +218,20 @@ def dashboard():
 
         print("📤 Uploaded:", filepath)
 
-        # ✅ CALL FIXED API
+        # 🔥 CALL API
         label, confidence = predict_video_api(filepath)
 
-        # ✅ DELETE FILE
+        # DELETE FILE
         if os.path.exists(filepath):
             os.remove(filepath)
 
-        # ✅ HANDLE ERROR
-        if label == "ERROR":
-            flash("Prediction failed. Try again.")
-            return redirect(url_for('dashboard'))
+        # ✅ FIXED: DO NOT REDIRECT ON ERROR
+        if label is None:
+            return render_template(
+                'result.html',
+                label="ERROR",
+                confidence=0
+            )
 
         return render_template(
             'result.html',
