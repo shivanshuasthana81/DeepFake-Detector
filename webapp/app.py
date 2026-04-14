@@ -1,36 +1,41 @@
 import os
 import sys
+import uuid
+import sqlite3
 
-# ✅ FORCE ADD PROJECT ROOT TO PATH (RENDER SAFE)
-ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-sys.path.insert(0, ROOT_DIR)
+# ✅ FIX 1: ADD ROOT PATH (VERY IMPORTANT)
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+ROOT_DIR = os.path.abspath(os.path.join(BASE_DIR, ".."))
+sys.path.append(ROOT_DIR)
 
-
+# ---------------- IMPORTS ---------------- #
 from flask import Flask, render_template, redirect, url_for, request, flash
 from flask_login import LoginManager, UserMixin, login_user, login_required, logout_user, current_user
+from werkzeug.security import generate_password_hash, check_password_hash
+from werkzeug.utils import secure_filename
 
 import torch
 import cv2
 import torchvision.transforms as T
 
-# ✅ NOW THIS WILL WORK
 from src.utils.face_detect import crop_faces_from_frame
 from src.model import CNNFeatureExtractor, CNN_LSTM_Attention
 
 
-# ---------------- PATH SETUP ---------------- #
+# ---------------- CONFIG ---------------- #
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-UPLOAD_FOLDER = os.path.join(BASE_DIR, "static", "uploads")
-MODEL_PATH = os.path.join(BASE_DIR, "models", "best.pth")
+ALLOWED_EXTENSIONS = {'mp4', 'avi', 'mov'}
 
+def allowed_file(filename):
+    return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
 
-# ---------------- APP SETUP ---------------- #
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = 'secret123'
-app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
+app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024
 
+
+# ---------------- LOGIN ---------------- #
 
 login_manager = LoginManager()
 login_manager.init_app(app)
@@ -39,19 +44,19 @@ login_manager.login_view = "login"
 
 # ---------------- DATABASE ---------------- #
 
-import sqlite3
+DB_PATH = os.path.join(BASE_DIR, "users.db")
 
 def init_db():
-    conn = sqlite3.connect('users.db')
+    conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
 
-    c.execute('''
+    c.execute("""
         CREATE TABLE IF NOT EXISTS users (
             id TEXT PRIMARY KEY,
             username TEXT UNIQUE,
             password TEXT
         )
-    ''')
+    """)
 
     conn.commit()
     conn.close()
@@ -68,7 +73,7 @@ class User(UserMixin):
 
 @login_manager.user_loader
 def load_user(user_id):
-    conn = sqlite3.connect('users.db')
+    conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
 
     c.execute("SELECT * FROM users WHERE id=?", (user_id,))
@@ -81,9 +86,18 @@ def load_user(user_id):
     return None
 
 
-# ---------------- MODEL ---------------- #
+# ---------------- FILE STORAGE ---------------- #
 
-device = 'cpu'
+UPLOAD_FOLDER = os.path.join(BASE_DIR, "static", "uploads")
+os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
+
+
+# ---------------- MODEL LOAD ---------------- #
+
+MODEL_PATH = os.path.join(BASE_DIR, "models", "best.pth")
+
+device = "cpu"
 
 transform = T.Compose([
     T.Resize((224,224)),
@@ -95,7 +109,6 @@ feat_extractor = CNNFeatureExtractor().to(device)
 model = CNN_LSTM_Attention(feat_dim=feat_extractor.out_dim).to(device)
 
 checkpoint = torch.load(MODEL_PATH, map_location=device)
-
 feat_extractor.load_state_dict(checkpoint['feat_state'])
 model.load_state_dict(checkpoint['model_state'])
 
@@ -108,18 +121,19 @@ print("✅ Model loaded correctly on Render")
 # ---------------- PREDICTION ---------------- #
 
 def predict_video(video_path):
-
     cap = cv2.VideoCapture(video_path)
-    frames = []
 
+    frames = []
     ok, frame = cap.read()
     idx = 0
 
     while ok and idx < 16:
         try:
             faces = crop_faces_from_frame(frame)
+
             if len(faces) > 0:
                 frames.append(faces[0])
+
         except Exception as e:
             print("Face error:", e)
 
@@ -127,8 +141,6 @@ def predict_video(video_path):
         idx += 1
 
     cap.release()
-
-    print("Frames:", len(frames))
 
     if len(frames) < 2:
         return "NO FACE DETECTED", 0
@@ -145,8 +157,6 @@ def predict_video(video_path):
         logits, _ = model(feats)
         probs = torch.softmax(logits, dim=1).cpu().numpy()[0]
 
-    print("PROBS:", probs)
-
     label = "FAKE" if probs[1] > probs[0] else "REAL"
     confidence = max(probs) * 100
 
@@ -160,31 +170,91 @@ def home():
     return render_template('home.html')
 
 
-@app.route('/dashboard', methods=['GET','POST'])
-@login_required
-def dashboard():
+@app.route('/about')
+def about():
+    return render_template('about.html')
 
+
+@app.route('/register', methods=['GET','POST'])
+def register():
     if request.method == 'POST':
+        username = request.form['username']
+        password = generate_password_hash(request.form['password'])
 
-        file = request.files['video']
+        conn = sqlite3.connect(DB_PATH)
+        c = conn.cursor()
 
-        filepath = os.path.join(app.config['UPLOAD_FOLDER'], file.filename)
-        file.save(filepath)
+        try:
+            c.execute("INSERT INTO users VALUES (?, ?, ?)",
+                      (str(uuid.uuid4()), username, password))
+            conn.commit()
+            flash("Registered Successfully")
+        except:
+            flash("Username already exists")
 
-        label, confidence = predict_video(filepath)
+        conn.close()
+        return redirect(url_for('login'))
 
-        os.remove(filepath)
-
-        return render_template('result.html', label=label, confidence=confidence)
-
-    return render_template('dashboard.html', username=current_user.username)
+    return render_template('register.html')
 
 
 @app.route('/login', methods=['GET','POST'])
 def login():
     if request.method == 'POST':
-        return redirect(url_for('dashboard'))
+        username = request.form['username']
+        password = request.form['password']
+
+        conn = sqlite3.connect(DB_PATH)
+        c = conn.cursor()
+
+        c.execute("SELECT * FROM users WHERE username=?", (username,))
+        user = c.fetchone()
+
+        conn.close()
+
+        if user and check_password_hash(user[2], password):
+            login_user(User(user[0], user[1], user[2]))
+            return redirect(url_for('dashboard'))
+
+        flash("Invalid credentials")
+
     return render_template('login.html')
+
+
+@app.route('/dashboard', methods=['GET','POST'])
+@login_required
+def dashboard():
+    if request.method == 'POST':
+
+        if 'video' not in request.files:
+            flash("No file uploaded")
+            return redirect(url_for('dashboard'))
+
+        file = request.files['video']
+
+        if file.filename == '':
+            flash("No file selected")
+            return redirect(url_for('dashboard'))
+
+        if not allowed_file(file.filename):
+            flash("Invalid format")
+            return redirect(url_for('dashboard'))
+
+        filename = secure_filename(file.filename)
+        filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+        file.save(filepath)
+
+        print("Uploaded:", filepath)
+
+        label, confidence = predict_video(filepath)
+
+        os.remove(filepath)
+
+        return render_template('result.html',
+                               label=label,
+                               confidence=confidence)
+
+    return render_template('dashboard.html', username=current_user.username)
 
 
 @app.route('/logout')
@@ -194,8 +264,6 @@ def logout():
     return redirect(url_for('login'))
 
 
-# ---------------- RUN ---------------- #
-
-if __name__ == '__main__':
-    os.makedirs(UPLOAD_FOLDER, exist_ok=True)
-    app.run(debug=True)
+@app.route('/health')
+def health():
+    return "OK", 200
