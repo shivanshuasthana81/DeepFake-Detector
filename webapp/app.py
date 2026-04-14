@@ -95,7 +95,7 @@ def predict_video_api(filepath):
             client = Client("shivanshuasthana81/deepfake-detector")
 
             result = client.predict(
-                filepath,
+                video=filepath,
                 api_name="predict"
             )
 
