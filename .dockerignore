@@ -1,8 +1,24 @@
+# ML stuff (not needed in Render)
 experiments/
 scripts/
 src/
 *.pth
+
+# Python cache
 __pycache__/
+*.pyc
+
+# Git
 .git
 .gitignore
+
+# Logs
 *.log
+
+# OS files
+.DS_Store
+
+# Large files
+*.mp4
+*.avi
+*.mov
