@@ -3,6 +3,7 @@ import uuid
 import sqlite3
 import requests
 import time
+import base64
 
 from werkzeug.utils import secure_filename
 
@@ -86,62 +87,56 @@ app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
 
-# ---------------- HF API ---------------- #
+# ---------------- HF API (FIXED) ---------------- #
 
-HF_API_URL = "https://shivanshuasthana81-deepfake-detector.hf.space/run/predict"
+HF_API_URL = "https://shivanshuasthana81-deepfake-detector.hf.space/api/predict"
 
 
 def predict_video_api(filepath):
     """
-    Calls Hugging Face API
-    Includes retry + safe parsing
+    Stable Hugging Face API call using /api/predict
     """
 
-    for attempt in range(2):
-        try:
-            with open(filepath, "rb") as f:
-                response = requests.post(
-                    HF_API_URL,
-                    files={
-                        "data": (
-                            os.path.basename(filepath),
-                            f,
-                            "video/mp4"
-                        )
-                    },
-                    timeout=120
-                )
+    try:
+        with open(filepath, "rb") as f:
+            video_bytes = f.read()
 
-            if response.status_code != 200:
-                print("❌ API ERROR:", response.text)
-                return "ERROR", 0
+        # ✅ Convert to base64 (required by Gradio API)
+        video_base64 = base64.b64encode(video_bytes).decode("utf-8")
 
-            result = response.json()
+        payload = {
+            "data": [
+                {
+                    "name": os.path.basename(filepath),
+                    "data": f"data:video/mp4;base64,{video_base64}"
+                }
+            ]
+        }
 
-            print("🔍 RAW API RESPONSE:", result)  # DEBUG
+        response = requests.post(
+            HF_API_URL,
+            json=payload,
+            timeout=120
+        )
 
-            # ✅ SAFE PARSING
-            if "data" not in result or len(result["data"]) < 2:
-                return "ERROR", 0
-
-            label = str(result["data"][0])
-
-            try:
-                confidence = float(result["data"][1])
-            except:
-                confidence = 0.0
-
-            return label, round(confidence, 2)
-
-        except requests.exceptions.Timeout:
-            print("⏳ Timeout, retrying...")
-            time.sleep(3)
-
-        except Exception as e:
-            print("❌ REQUEST ERROR:", e)
+        if response.status_code != 200:
+            print("❌ API ERROR:", response.text)
             return "ERROR", 0
 
-    return "TIMEOUT (HF sleeping)", 0
+        result = response.json()
+        print("🔍 API RESPONSE:", result)
+
+        if "data" not in result or len(result["data"]) < 2:
+            return "ERROR", 0
+
+        label = result["data"][0]
+        confidence = float(result["data"][1])
+
+        return label, round(confidence, 2)
+
+    except Exception as e:
+        print("❌ REQUEST ERROR:", e)
+        return "ERROR", 0
 
 
 # ---------------- ROUTES ---------------- #
@@ -226,12 +221,17 @@ def dashboard():
 
         print("📤 Uploaded:", filepath)
 
-        # ✅ CALL HF API
+        # ✅ CALL FIXED API
         label, confidence = predict_video_api(filepath)
 
         # ✅ DELETE FILE
         if os.path.exists(filepath):
             os.remove(filepath)
+
+        # ✅ HANDLE ERROR
+        if label == "ERROR":
+            flash("Prediction failed. Try again.")
+            return redirect(url_for('dashboard'))
 
         return render_template(
             'result.html',
