@@ -96,7 +96,7 @@ def predict_video_api(filepath):
 
             result = client.predict(
                 filepath,
-                api_name="/predict"
+                api_name="predict"
             )
 
             print("🔍 RAW RESULT:", result)
