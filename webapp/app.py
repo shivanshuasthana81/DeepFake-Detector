@@ -83,14 +83,15 @@ os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 
 
-# ---------------- HF CALL (FINAL FIXED) ---------------- #
+# ---------------- HF CALL (FINAL STABLE) ---------------- #
 
 def predict_video_api(filepath):
 
-    for attempt in range(3):  # 🔁 retry for HF cold start
+    for attempt in range(3):
         try:
             print(f"🚀 Attempt {attempt+1}: Connecting to HF...")
 
+            # ✅ IMPORTANT: create client INSIDE function
             client = Client("shivanshuasthana81/deepfake-detector")
 
             result = client.predict(
@@ -103,29 +104,29 @@ def predict_video_api(filepath):
             # ✅ SAFE PARSING
             if isinstance(result, (list, tuple)):
 
-                # case: ['FAKE', 85.34]
                 if len(result) == 2 and isinstance(result[0], str):
                     label = result[0]
                     confidence = float(result[1])
 
-                # case: [['FAKE', 85.34]]
                 elif len(result) == 1 and isinstance(result[0], (list, tuple)):
                     label = result[0][0]
                     confidence = float(result[0][1])
 
                 else:
-                    label = "ERROR"
-                    confidence = 0
+                    raise Exception("Unexpected response format")
 
             else:
-                label = "ERROR"
-                confidence = 0
+                raise Exception("Invalid response type")
+
+            # ✅ PREVENT FAKE 0% BUG
+            if confidence == 0:
+                raise Exception("HF not ready (confidence 0)")
 
             return label, round(confidence, 2)
 
         except Exception as e:
             print(f"❌ Attempt {attempt+1} failed:", e)
-            time.sleep(3)  # wait before retry
+            time.sleep(3)
 
     return "ERROR", 0
 
@@ -220,6 +221,11 @@ def dashboard():
         # cleanup
         if os.path.exists(filepath):
             os.remove(filepath)
+
+        # ✅ HANDLE ERROR PROPERLY (NO FAKE 0%)
+        if label == "ERROR":
+            flash("Model is waking up... Please try again in a few seconds.")
+            return redirect(url_for('dashboard'))
 
         return render_template(
             'result.html',
