@@ -7,6 +7,26 @@
 
     <!-- CSS -->
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+
+    <style>
+        /* File info display */
+        .file-info {
+            margin-top: 10px;
+            padding: 10px;
+            background: #f1f1f1;
+            border-radius: 6px;
+            font-size: 14px;
+            display: none;
+        }
+
+        /* Loader */
+        #loader {
+            display: none;
+            flex-direction: column;
+            align-items: center;
+            margin-top: 15px;
+        }
+    </style>
 </head>
 
 <body>
@@ -30,15 +50,16 @@
 
         <h2>Upload Video</h2>
 
-        <!-- FORM -->
-        <form method="POST" enctype="multipart/form-data" onsubmit="showLoader()">
+        <!-- ✅ FIXED FORM -->
+        <form method="POST" enctype="multipart/form-data">
 
+            <!-- FILE INPUT -->
             <input type="file" name="video" id="videoInput" accept="video/*" required>
 
-            <!-- VIDEO PREVIEW -->
-            <video id="preview" controls></video>
+            <!-- FILE INFO (LIKE HF) -->
+            <div id="fileInfo" class="file-info"></div>
 
-            <button type="submit" class="btn-primary">Analyze Video</button>
+            <button type="submit" class="btn-primary" onclick="showLoader()">Analyze Video</button>
 
         </form>
 
@@ -54,18 +75,28 @@
 
 <!-- SCRIPT -->
 <script>
-document.getElementById("videoInput").onchange = function (event) {
-    const file = event.target.files[0];
+const input = document.getElementById("videoInput");
+const fileInfo = document.getElementById("fileInfo");
+
+input.onchange = function () {
+    const file = this.files[0];
+
     if (file) {
-        const url = URL.createObjectURL(file);
-        const video = document.getElementById("preview");
-        video.src = url;
-        video.style.display = "block";
+        const sizeMB = (file.size / (1024 * 1024)).toFixed(2);
+
+        fileInfo.style.display = "block";
+        fileInfo.innerHTML = `
+            📁 <strong>${file.name}</strong><br>
+            📦 Size: ${sizeMB} MB
+        `;
     }
 };
 
+// ✅ FIXED LOADER (does NOT block form submit)
 function showLoader() {
-    document.getElementById("loader").style.display = "flex";
+    setTimeout(() => {
+        document.getElementById("loader").style.display = "flex";
+    }, 100);
 }
 </script>
 
