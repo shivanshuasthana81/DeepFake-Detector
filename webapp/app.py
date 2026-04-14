@@ -2,6 +2,8 @@ import os
 import uuid
 import sqlite3
 import requests
+import base64
+import time
 
 from werkzeug.utils import secure_filename
 
@@ -22,7 +24,7 @@ def allowed_file(filename):
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = 'secret123'
-app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024  # 50MB
+app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024
 
 
 login_manager = LoginManager()
@@ -83,52 +85,56 @@ app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
 
-# ---------------- HF API (FINAL FIXED) ---------------- #
+# ---------------- HF API (FINAL CORRECT) ---------------- #
 
-HF_API_URL = "https://shivanshuasthana81-deepfake-detector.hf.space/run/predict"
+HF_API_URL = "https://shivanshuasthana81-deepfake-detector.hf.space/api/predict"
 
 
 def predict_video_api(filepath):
-    """
-    Stable HF API using file upload (NO base64)
-    """
 
-    try:
-        with open(filepath, "rb") as f:
+    for attempt in range(2):  # retry if HF sleeps
+        try:
+            with open(filepath, "rb") as f:
+                video_bytes = f.read()
+
+            video_base64 = base64.b64encode(video_bytes).decode("utf-8")
+
+            payload = {
+                "data": [
+                    {
+                        "name": os.path.basename(filepath),
+                        "data": f"data:video/mp4;base64,{video_base64}"
+                    }
+                ]
+            }
+
             response = requests.post(
                 HF_API_URL,
-                files={
-                    "data": (
-                        os.path.basename(filepath),
-                        f,
-                        "video/mp4"
-                    )
-                },
+                json=payload,
                 timeout=120
             )
 
-        if response.status_code != 200:
-            print("❌ API ERROR:", response.text)
-            return None, 0   # ❗ IMPORTANT CHANGE
+            if response.status_code != 200:
+                print("❌ API ERROR:", response.text)
+                time.sleep(2)
+                continue
 
-        result = response.json()
-        print("🔍 API RESPONSE:", result)
+            result = response.json()
+            print("🔍 API RESPONSE:", result)
 
-        if "data" not in result or len(result["data"]) < 2:
-            return None, 0   # ❗ IMPORTANT CHANGE
+            if "data" not in result or len(result["data"]) < 2:
+                return None, 0
 
-        label = str(result["data"][0])
-
-        try:
+            label = str(result["data"][0])
             confidence = float(result["data"][1])
-        except:
-            confidence = 0.0
 
-        return label, round(confidence, 2)
+            return label, round(confidence, 2)
 
-    except Exception as e:
-        print("❌ REQUEST ERROR:", e)
-        return None, 0   # ❗ IMPORTANT CHANGE
+        except Exception as e:
+            print("❌ REQUEST ERROR:", e)
+            time.sleep(2)
+
+    return None, 0
 
 
 # ---------------- ROUTES ---------------- #
@@ -218,14 +224,12 @@ def dashboard():
 
         print("📤 Uploaded:", filepath)
 
-        # 🔥 CALL API
+        # 🔥 CALL HF API (FIXED)
         label, confidence = predict_video_api(filepath)
 
-        # DELETE FILE
         if os.path.exists(filepath):
             os.remove(filepath)
 
-        # ✅ FIXED: DO NOT REDIRECT ON ERROR
         if label is None:
             return render_template(
                 'result.html',
