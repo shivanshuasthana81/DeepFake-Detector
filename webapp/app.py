@@ -87,7 +87,7 @@ os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
 # ---------------- HF API (FINAL CORRECT) ---------------- #
 
-HF_API_URL = "https://shivanshuasthana81-deepfake-detector.hf.space/api/predict"
+HF_API_URL = "https://shivanshuasthana81-deepfake-detector.hf.space"
 
 
 def predict_video_api(filepath):
