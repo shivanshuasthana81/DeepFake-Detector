@@ -1,8 +1,6 @@
-# ML stuff (not needed in Render)
+# ML stuff (KEEP MODEL + SRC)
 experiments/
 scripts/
-src/
-*.pth
 
 # Python cache
 __pycache__/
@@ -18,7 +16,7 @@ __pycache__/
 # OS files
 .DS_Store
 
-# Large files
+# Large files (optional)
 *.mp4
 *.avi
 *.mov
