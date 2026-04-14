@@ -1,11 +1,25 @@
 FROM python:3.10-slim
 
+# Install system dependencies (optional but recommended for OpenCV/Video processing)
+RUN apt-get update && apt-get install -y \
+    libgl1-mesa-glx \
+    libglib2.0-0 \
+    && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /app
 
-COPY . .
-
+# Copy requirements first to leverage Docker cache
+COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-WORKDIR /app/webapp
+# Copy the rest of the application
+COPY . .
 
-CMD ["gunicorn", "app:app", "--bind", "0.0.0.0:10000", "--timeout", "120"]
+# Set PYTHONPATH so gunicorn can find 'app.py' inside the 'webapp' folder
+ENV PYTHONPATH=/app/webapp
+
+# Expose the port Render uses
+EXPOSE 10000
+
+# Start from the root directory but point Gunicorn to the app file
+CMD ["gunicorn", "--workers", "2", "--timeout", "120", "--bind", "0.0.0.0:10000", "webapp.app:app"]
