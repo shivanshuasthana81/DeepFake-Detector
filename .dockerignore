@@ -1,22 +1,14 @@
-# ML stuff (KEEP MODEL + SRC)
 experiments/
 scripts/
+src/
+webapp/models/
 
-# Python cache
 __pycache__/
 *.pyc
-
-# Git
 .git
 .gitignore
-
-# Logs
 *.log
-
-# OS files
 .DS_Store
-
-# Large files (optional)
 *.mp4
 *.avi
 *.mov
