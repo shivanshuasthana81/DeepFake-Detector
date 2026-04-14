@@ -1,8 +1,10 @@
 FROM python:3.10-slim
 
-# Install system dependencies (optional but recommended for OpenCV/Video processing)
+# Install modern system dependencies for OpenCV/Video processing
+# libgl1 and libglib2.0-0 are the core requirements
 RUN apt-get update && apt-get install -y \
-    libgl1-mesa-glx \
+    libgl1 \
+    libglx-mesa0 \
     libglib2.0-0 \
     && rm -rf /var/lib/apt/lists/*
 
