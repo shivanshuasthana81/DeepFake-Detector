@@ -23,7 +23,9 @@ def allowed_file(filename):
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = 'secret123'
-app.config['MAX_CONTENT_LENGTH'] = 20 * 1024 * 1024  # 20MB
+
+# ✅ Increased file size (50MB)
+app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024
 
 
 login_manager = LoginManager()
@@ -91,17 +93,23 @@ HF_API_URL = "https://shivanshuasthana81-deepfake-detector.hf.space/run/predict"
 
 def predict_video_api(filepath):
     """
-    Calls Hugging Face Space API
-    Includes retry + timeout handling
+    Calls Hugging Face API
+    Includes retry + safe parsing
     """
 
-    for attempt in range(2):  # 🔥 retry twice
+    for attempt in range(2):
         try:
             with open(filepath, "rb") as f:
                 response = requests.post(
                     HF_API_URL,
-                    files={"data": (os.path.basename(filepath), f, "video/mp4")},
-                    timeout=120  # 🔥 increased timeout
+                    files={
+                        "data": (
+                            os.path.basename(filepath),
+                            f,
+                            "video/mp4"
+                        )
+                    },
+                    timeout=120
                 )
 
             if response.status_code != 200:
@@ -110,11 +118,20 @@ def predict_video_api(filepath):
 
             result = response.json()
 
-            # Expected Gradio format
-            label = result["data"][0]
-            confidence = result["data"][1]
+            print("🔍 RAW API RESPONSE:", result)  # DEBUG
 
-            return label, confidence
+            # ✅ SAFE PARSING
+            if "data" not in result or len(result["data"]) < 2:
+                return "ERROR", 0
+
+            label = str(result["data"][0])
+
+            try:
+                confidence = float(result["data"][1])
+            except:
+                confidence = 0.0
+
+            return label, round(confidence, 2)
 
         except requests.exceptions.Timeout:
             print("⏳ Timeout, retrying...")
@@ -207,10 +224,12 @@ def dashboard():
         filepath = os.path.join(app.config['UPLOAD_FOLDER'], unique_name)
         file.save(filepath)
 
-        # 🔥 Call HF API
+        print("📤 Uploaded:", filepath)
+
+        # ✅ CALL HF API
         label, confidence = predict_video_api(filepath)
 
-        # 🔥 Delete file after processing
+        # ✅ DELETE FILE
         if os.path.exists(filepath):
             os.remove(filepath)
 
@@ -237,7 +256,7 @@ def health():
 
 @app.errorhandler(413)
 def too_large(e):
-    return "File too large (Max 20MB)", 413
+    return "File too large (Max 50MB)", 413
 
 
 # ---------------- MAIN ---------------- #
