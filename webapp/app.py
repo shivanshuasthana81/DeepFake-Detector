@@ -1,6 +1,7 @@
 import os
 import uuid
 import sqlite3
+import time
 
 from flask import Flask, render_template, redirect, url_for, request, flash
 from flask_login import LoginManager, UserMixin, login_user, login_required, logout_user, current_user
@@ -82,48 +83,51 @@ os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 
 
-# ---------------- HF CALL ---------------- #
+# ---------------- HF CALL (FINAL FIXED) ---------------- #
 
 def predict_video_api(filepath):
-    try:
-        print("🚀 Connecting to HF...")
 
-        client = Client("shivanshuasthana81/deepfake-detector")
+    for attempt in range(3):  # 🔁 retry for HF cold start
+        try:
+            print(f"🚀 Attempt {attempt+1}: Connecting to HF...")
 
-        result = client.predict(
-            filepath,
-            api_name="/predict"
-        )
+            client = Client("shivanshuasthana81/deepfake-detector")
 
-        print("🔍 RAW RESULT:", result)
+            result = client.predict(
+                filepath,
+                api_name="/predict"
+            )
 
-        # ✅ HANDLE ALL CASES
-        if isinstance(result, (list, tuple)):
+            print("🔍 RAW RESULT:", result)
 
-            # case 1: ['FAKE', 85.34]
-            if len(result) == 2 and isinstance(result[0], str):
-                label = result[0]
-                confidence = float(result[1])
+            # ✅ SAFE PARSING
+            if isinstance(result, (list, tuple)):
 
-            # case 2: [['FAKE', 85.34]]
-            elif len(result) == 1:
-                label = result[0][0]
-                confidence = float(result[0][1])
+                # case: ['FAKE', 85.34]
+                if len(result) == 2 and isinstance(result[0], str):
+                    label = result[0]
+                    confidence = float(result[1])
 
-            # fallback
+                # case: [['FAKE', 85.34]]
+                elif len(result) == 1 and isinstance(result[0], (list, tuple)):
+                    label = result[0][0]
+                    confidence = float(result[0][1])
+
+                else:
+                    label = "ERROR"
+                    confidence = 0
+
             else:
-                label = str(result)
+                label = "ERROR"
                 confidence = 0
 
-        else:
-            label = "ERROR"
-            confidence = 0
+            return label, round(confidence, 2)
 
-        return label, round(confidence, 2)
+        except Exception as e:
+            print(f"❌ Attempt {attempt+1} failed:", e)
+            time.sleep(3)  # wait before retry
 
-    except Exception as e:
-        print("❌ HF ERROR:", e)
-        return "ERROR", 0
+    return "ERROR", 0
 
 
 # ---------------- ROUTES ---------------- #
@@ -213,6 +217,7 @@ def dashboard():
 
         label, confidence = predict_video_api(filepath)
 
+        # cleanup
         if os.path.exists(filepath):
             os.remove(filepath)
 
